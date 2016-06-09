@@ -10,11 +10,26 @@ import skimage.io, skimage
 
 import time, sys
 
+def alphablend(src, destination, x,y):
+    h,w, chans = src.shape
+    dst = destination[y:y+h, x:x+w, :]
+    print src.shape, np.ones((h,w,1)).shape
+    if chans == 3:
+        src = np.append(src,np.ones((h,w,1)), axis=2)
+    result = destination
+    result[y:y+h, x:x+w, 3] = src[:,:,3] + dst[:,:,3] * (1.-src[:,:,3])
+    result[y:y+h, x:x+w,:3] = src[:,:,:3]*src[:,:,3][..., None] \
+                                          + dst[:,:,:3]*dst[:,:,3][..., None] \
+                                          * ((1.-src[:,:,3])/result[y:y+h, x:x+w, 3])[...,None]
+
+    return result
+
+
 fps = 30.
 sample_length = 0.2
 
 logo_img = skimage.img_as_float(skidat.imread("logo.png"))
-episode_img_raw = skimage.img_as_float(skidat.imread("KP077_rifugxintoj.jpg"))
+episode_img = skimage.img_as_float(skidat.imread("KP077_rifugxintoj.jpg"))
 
 background_color = np.array([80.,70.,199.,255.])/255.
 
@@ -35,33 +50,14 @@ print framesamples
 
 background = np.ones((1080,1900,4))*background_color
 
-h, w, foo = logo_img.shape
-X, Y = 90, 540
+x, y = 90, 540-logo_img.shape[0]/2
+background = alphablend(logo_img, background, x,y )
 
-Y -= h/2
+h, w, foo = episode_img.shape
+x, y = 910, 540-episode_img.shape[0]/2
 
-dst = background[Y:Y+h, X:X+w, :]
-src = logo_img
-background[Y:Y+h, X:X+w, 3] = src[:,:,3] + dst[:,:,3] * (1.-src[:,:,3])
-background[Y:Y+h, X:X+w,:3] = src[:,:,:3]*src[:,:,3][..., None] \
-                                          + dst[:,:,:3]*dst[:,:,3][..., None] \
-                                          * ((1.-src[:,:,3])/background[Y:Y+h, X:X+w, 3])[...,None]
+background = alphablend(episode_img, background, x,y)
 
-h, w, foo = episode_img_raw.shape
-X, Y = 910, 540
-
-Y -= h/2
-
-
-episode_img = np.ones((h, w, 4))
-episode_img[:,:,:3] = episode_img_raw
-
-dst = background[Y:Y+h, X:X+w, :]
-src = episode_img
-background[Y:Y+h, X:X+w, 3] = src[:,:,3] + dst[:,:,3] * (1.-src[:,:,3])
-background[Y:Y+h, X:X+w,:3] = src[:,:,:3]*src[:,:,3][..., None] \
-                                          + dst[:,:,:3]*dst[:,:,3][..., None] \
-                                          * ((1.-src[:,:,3])/background[Y:Y+h, X:X+w, 3])[...,None]
 
 
 part = 10
@@ -108,7 +104,7 @@ barvalsR /= np.max(barvalsR)
 
 last_time = time.clock()
 
-for i in range(framenum):
+for i in range(14,15):
     print "rendering %03d/%3d" % (i,framenum),
     frame = np.copy(background)[:,:,0:3]
     for j in range(bins):
