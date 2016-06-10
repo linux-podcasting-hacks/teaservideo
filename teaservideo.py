@@ -1,6 +1,8 @@
 
 import numpy as np
 import scipy
+import scipy.misc
+import scipy.ndimage
 import pylab as plt
 
 import scipy.io.wavfile as wavfile
@@ -13,7 +15,6 @@ import time, sys
 def alphablend(src, destination, x,y):
     h,w, chans = src.shape
     dst = destination[y:y+h, x:x+w, :]
-    print src.shape, np.ones((h,w,1)).shape
     if chans == 3:
         src = np.append(src,np.ones((h,w,1)), axis=2)
     result = destination
@@ -31,7 +32,18 @@ sample_length = 0.2
 logo_img = skimage.img_as_float(skidat.imread("logo.png"))
 episode_img = skimage.img_as_float(skidat.imread("KP077_rifugxintoj.jpg"))
 
-background_color = np.array([80.,70.,199.,255.])/255.
+episode_scaled = scipy.misc.imresize(episode_img, (1080,1900))
+
+blurred = np.zeros((1080,1900,3))
+for i in range(3):
+    blurred[:,:,i] = scipy.ndimage.gaussian_filter(episode_scaled[:,:,i], sigma=30)/255.
+
+print np.max(blurred), np.min(blurred)
+print np.max(episode_img), np.min(episode_scaled)
+
+skimage.io.imsave("test.jpg", blurred)
+
+
 
 audioclip_filename = 'kp077-rifugxintoj.wav'
 
@@ -48,7 +60,8 @@ step = (samplenum-framesamples)/framenum
 
 print framesamples
 
-background = np.ones((1080,1900,4))*background_color
+background = np.ones((1080,1900,4))
+background[:,:,:3] = blurred
 
 x, y = 90, 540-logo_img.shape[0]/2
 background = alphablend(logo_img, background, x,y )
