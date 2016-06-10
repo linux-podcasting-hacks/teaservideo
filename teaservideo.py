@@ -117,9 +117,9 @@ barvalsR /= np.max(barvalsR)
 
 last_time = time.clock()
 
-for i in range(14,15):
+for i in range(framenum):
     print "rendering %03d/%3d" % (i,framenum),
-    frame = np.copy(background)[:,:,0:3]
+    frame = np.copy(background)[:,:,:]
     for j in range(bins):
         X = startX+j*width
         vL = barvalsL[i,j]
@@ -127,28 +127,30 @@ for i in range(14,15):
         vR = barvalsR[i,j]
         hR = int(np.round(vR*height))
 
-        rectU = np.ones((hR,width-2,3))
-        rectU[:,:,:] = [0.,1.,0.]
+        alpha = 0.6
 
-        rectL = np.ones((hL,width-2,3))
-        rectL[:,:,:] = [0.,1.,0.]
+        rectU = np.ones((hR,width-2,4))
+        rectU[:,:,:] = [0.,1.,0.,alpha]
 
-        l = int(np.round(0.5*height))
-        if vL > 0.5:
-            rectL[:-l,:,:] = [1.,1.,0]
-        if vR > 0.5:
-            rectU[l:,:,:] = [1.,1.,0]
+        rectL = np.ones((hL,width-2,4))
+        rectL[:,:,:] = [0.,1.,0.,alpha]
 
-        l = int(np.round(0.8*height))
-        if vL > 0.8:
-            rectL[:-l,:,:] = [1.,0.,0]
-        if vR > 0.7:
-            rectU[l:,:,:] = [1.,0.,0]
+        colorsteps = [ (0.33, [1.,1.,0.,alpha]),
+                       (0.67, [1.,0.,0.,alpha])]
 
-        frame[startY:startY+hR,X:X+width-2,:] = rectU
+        for v,c in colorsteps:
+            l = int(np.round(v*height))
+            if vL > v:
+                rectL[:-l,:,:] = c
+            if vR > v:
+                rectU[l:,:,:] = c
+
+        frame = alphablend(rectU, frame, X, startY)
+#        frame[startY:startY+hR,X:X+width-2,:] = rectU
 
         startY2 = 1080-startY
-        frame[startY2-hL:startY2,X:X+width-2,:] = rectL
+        frame = alphablend(rectL, frame, X, startY2-hL )
+#        frame[startY2-hL:startY2,X:X+width-2,:] = rectL
 
     skimage.io.imsave("frame%03d.png" % i, frame)
 
