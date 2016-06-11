@@ -9,6 +9,7 @@ import scipy.io.wavfile as wavfile
 
 import skimage.data as skidat
 import skimage.io, skimage
+import skimage.color
 
 import time, sys
 
@@ -30,7 +31,7 @@ fps = 30.
 sample_length = 0.2
 
 logo_img = skimage.img_as_float(skidat.imread("logo.png"))
-episode_img = skimage.img_as_float(skidat.imread("KP077_rifugxintoj.jpg"))
+episode_img = skimage.img_as_float(skidat.imread("KP078_Google IO.jpg"))
 
 episode_scaled = scipy.misc.imresize(episode_img, (1080,1900))
 
@@ -41,11 +42,27 @@ for i in range(3):
 print np.max(blurred), np.min(blurred)
 print np.max(episode_img), np.min(episode_scaled)
 
-skimage.io.imsave("test.jpg", blurred)
+img_hsv = skimage.color.rgb2hsv(episode_img)
+maxS = np.where(img_hsv[:,:,1].flatten() == np.amax((img_hsv[:,:,1].flatten())))
+maxS_colors = img_hsv[:,:,0].flatten()[maxS]
+colorcounts = np.bincount((maxS_colors*255).astype(int))
+color1H = maxS_colors[np.amax(colorcounts)]
+color2H = color1H + 0.3333333
+if color2H > 1.0:
+    color2H -= 1.0
+color3H = color2H + 0.3333333
+if color3H > 1.0:
+    color3H -= 1.0
 
+print np.array([[[color1H,1,1]]]).shape
 
+color1 = np.append(skimage.color.hsv2rgb([[[color1H,1,1]]]), [[1.]])
+color2 = np.append(skimage.color.hsv2rgb([[[color2H,1,1]]]), [[1.]])
+color3 = np.append(skimage.color.hsv2rgb([[[color3H,1,1]]]), [[1.]])
 
-audioclip_filename = 'kp077-rifugxintoj.wav'
+print color1
+
+audioclip_filename = 'kp078-google-io.wav'
 
 sample_rate,data = wavfile.read(audioclip_filename)
 print data.shape, sample_rate
@@ -130,13 +147,13 @@ for i in range(framenum):
         alpha = 0.6
 
         rectU = np.ones((hR,width-2,4))
-        rectU[:,:,:] = [0.,1.,0.,alpha]
+        rectU[:,:,:] = color1
 
         rectL = np.ones((hL,width-2,4))
-        rectL[:,:,:] = [0.,1.,0.,alpha]
+        rectL[:,:,:] = color1
 
-        colorsteps = [ (0.33, [1.,1.,0.,alpha]),
-                       (0.67, [1.,0.,0.,alpha])]
+        colorsteps = [ (0.33, color2),
+                       (0.67, color3)]
 
         for v,c in colorsteps:
             l = int(np.round(v*height))
