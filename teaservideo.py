@@ -29,18 +29,16 @@ def alphablend(src, destination, x,y):
 
 fps = 30.
 sample_length = 0.2
+imgsize = 700
 
-logo_img = skimage.img_as_float(skidat.imread("logo.png"))
-episode_img = skimage.img_as_float(skidat.imread("KP078_Google IO.jpg"))
+logo_img_orig = skimage.img_as_float(skidat.imread("logo.png"))
+episode_img_orig = skimage.img_as_float(skidat.imread("KP078_Google IO.jpg"))
 
-episode_scaled = scipy.misc.imresize(episode_img, (1080,1900))
+episode_scaled = scipy.misc.imresize(episode_img_orig, (1900,1900))[410:1490:,:]/255.
+episode_scaled_grey = 1.-skimage.color.rgb2grey(episode_scaled)/2.
 
-blurred = np.zeros((1080,1900,3))
-for i in range(3):
-    blurred[:,:,i] = scipy.ndimage.gaussian_filter(episode_scaled[:,:,i], sigma=30)/255.
-
-print np.max(blurred), np.min(blurred)
-print np.max(episode_img), np.min(episode_scaled)
+episode_img = scipy.misc.imresize(episode_img_orig, (imgsize,imgsize))/255.
+print episode_img.shape
 
 img_hsv = skimage.color.rgb2hsv(episode_img)
 maxS = np.where(img_hsv[:,:,1].flatten() == np.amax((img_hsv[:,:,1].flatten())))
@@ -134,8 +132,8 @@ barvalsR /= np.max(barvalsR)
 
 last_time = time.clock()
 
-for i in range(framenum):
-    print "rendering %03d/%3d" % (i,framenum),
+for i in range(14,15):
+    print "rendering %04d/%4d" % (i,framenum),
     frame = np.copy(background)[:,:,:]
     for j in range(bins):
         X = startX+j*width
@@ -162,14 +160,12 @@ for i in range(framenum):
             if vR > v:
                 rectU[l:,:,:] = c
 
-        frame = alphablend(rectU, frame, X, startY)
-#        frame[startY:startY+hR,X:X+width-2,:] = rectU
+        frame[startY:startY+hR,X:X+width-2,:3] = episode_scaled[startY:startY+hR,X:X+width-2,:]
 
         startY2 = 1080-startY
-        frame = alphablend(rectL, frame, X, startY2-hL )
-#        frame[startY2-hL:startY2,X:X+width-2,:] = rectL
+        frame[startY2-hL:startY2,X:X+width-2,:3] = episode_scaled[startY2-hL:startY2,X:X+width-2,:]
 
-    skimage.io.imsave("frame%03d.png" % i, frame)
+    skimage.io.imsave("frame%04d.png" % i, frame)
 
 
     this_time = time.clock()
