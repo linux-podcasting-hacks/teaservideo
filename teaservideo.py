@@ -29,9 +29,17 @@ def alphablend(src, destination, x,y):
 
 fps = 30.
 sample_length = 0.2
-imgsize = 700
+imgsize = 800
+
+
+edge = (1080-imgsize)/2
+logo_width = 1900-3*edge-imgsize
+
 
 logo_img_orig = skimage.img_as_float(skidat.imread("logo.png"))
+lH, lW, foo = logo_img_orig.shape
+logo_height = lH*logo_width/lW
+logo_img = scipy.misc.imresize(logo_img_orig, (logo_height, logo_width))/255.
 episode_img_orig = skimage.img_as_float(skidat.imread("KP078_Google IO.jpg"))
 
 episode_scaled = scipy.misc.imresize(episode_img_orig, (1900,1900))[410:1490:,:]/255.
@@ -76,13 +84,14 @@ step = (samplenum-framesamples)/framenum
 print framesamples
 
 background = np.ones((1080,1900,4))
-background[:,:,:3] = blurred
+for i in range(3):
+    background[:,:,i] = episode_scaled_grey
 
-x, y = 90, 540-logo_img.shape[0]/2
+x, y = edge, 540-logo_img.shape[0]/2
 background = alphablend(logo_img, background, x,y )
 
 h, w, foo = episode_img.shape
-x, y = 910, 540-episode_img.shape[0]/2
+x, y = 1900-imgsize-edge, 540-imgsize/2
 
 background = alphablend(episode_img, background, x,y)
 
@@ -90,9 +99,8 @@ background = alphablend(episode_img, background, x,y)
 
 part = 10
 bins = 24
-totwidth = 730
-startX, startY = 90, 90
-width, height = totwidth/bins, 300
+startX, startY = edge, edge
+width, height = logo_width/bins, 540-logo_height/2-edge-20
 last_spectrumL = None
 last_spectrumR = None
 
@@ -132,7 +140,7 @@ barvalsR /= np.max(barvalsR)
 
 last_time = time.clock()
 
-for i in range(14,15):
+for i in range(framenum):
     print "rendering %04d/%4d" % (i,framenum),
     frame = np.copy(background)[:,:,:]
     for j in range(bins):
