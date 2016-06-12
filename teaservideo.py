@@ -18,6 +18,15 @@ import time, sys
 
 import progress
 
+
+fps = 30.
+sample_length = 0.2
+imgsize = 800
+
+gamma = 0.5
+light = 0.3
+
+
 def alphablend(src, destination, x,y):
     h,w, chans = src.shape
     dst = destination[y:y+h, x:x+w, :]
@@ -32,12 +41,111 @@ def alphablend(src, destination, x,y):
     return result
 
 
-fps = 30.
-sample_length = 0.2
-imgsize = 800
+class CalculateThread(threading.Thread):
+    def __init__(self,sampledata, prms, rng, q):
+        threading.Thread.__init__(self)
+        self.data = sampledata
+        self.prms = prms
+        self.rng = rng
+        self.q = q
 
-gamma = 0.5
-light = 0.3
+    def run(self):
+        startX, startY, width, height, framesamples, spectrum_part, bins = self.prms
+        self.lower, self.upper = self.rng
+        last_spectrumL = None
+        last_spectrumR = None
+        self.barvalsL = np.zeros((self.upper-self.lower, bins))
+        self.barvalsR = np.zeros((self.upper-self.lower, bins))
+
+        for i in range(self.lower,self.upper):
+            maxX = framesamples/spectrum_part
+
+            samplesL = self.data[i*step:i*step+framesamples,0]
+            spectrumL = np.abs(scipy.fft(samplesL)[range(maxX)]*np.abs(np.mean(samplesL)))
+
+            samplesR = self.data[i*step:i*step+framesamples,1]
+            spectrumR = np.abs(scipy.fft(samplesR)[range(maxX)]*np.abs(np.mean(samplesR)))
+
+            if last_spectrumL is not None:
+                spectrumL = (spectrumL+last_spectrumL)/2.
+            if last_spectrumR is not None:
+                spectrumR = (spectrumR+last_spectrumR)/2.
+
+            binwidth = maxX/bins
+
+            for j in range(bins):
+                self.barvalsL[i-self.lower,j] = np.log(1.+np.mean(spectrumL[j*binwidth:(j+1)*binwidth]))
+                self.barvalsR[i-self.lower,j] = np.log(1.+np.mean(spectrumR[j*binwidth:(j+1)*binwidth]))
+
+            last_spectrumL = np.copy(spectrumL)
+            last_spectrumR = np.copy(spectrumR)
+
+            queueLock.acquire()
+            self.q.put(1)
+            queueLock.release()
+
+
+class RenderThread (threading.Thread):
+    def __init__(self, bardata, prms, rng, q):
+        threading.Thread.__init__(self)
+        self.bardata = bardata
+        self.prms = prms
+        self.rng = rng
+        self.q = q
+
+    def run(self):
+        startX, startY, height, bins = self.prms
+        barvalsL, barvalsR = self.bardata
+        lower, upper = self.rng
+        self.frames = 0
+        for i in range(upper-lower):
+            frame = np.copy(background)[:,:,:]
+            for j in range(bins):
+                X = startX+j*width
+                vL = barvalsL[i,j]
+                hL = int(np.round(vL*height))
+                vR = barvalsR[i,j]
+                hR = int(np.round(vR*height))
+
+                frame[startY:startY+hR,X:X+width-2,:3] = episode_scaled[startY:startY+hR,X:X+width-2,:]
+
+                startY2 = 1080-startY
+                frame[startY2-hL:startY2,X:X+width-2,:3] = episode_scaled[startY2-hL:startY2,X:X+width-2,:]
+            self.frames+=1
+            skimage.io.imsave("frame%04d.png" % (i+lower), frame)
+            queueLock.acquire()
+            self.q.put(1)
+            queueLock.release()
+
+
+class CounterThread (threading.Thread):
+    def __init__(self, framenum, q, infostring, threads):
+        threading.Thread.__init__(self)
+        self.frames_done = 0
+        self.framenum = framenum
+        self.q = q
+        self.infostring = infostring
+        self.threads = threads
+
+    def run(self):
+        global exitFlag
+        prg = progress.Progress(infostring=self.infostring)
+        while not exitFlag:
+            f = 0
+            queueLock.acquire()
+            while not self.q.empty():
+                f += self.q.get()
+            queueLock.release()
+            if f > 0:
+                self.frames_done += f
+                prg.progress(float(self.frames_done)/self.framenum)
+            time.sleep(.1)
+        f = 0
+        queueLock.acquire()
+        self.q.queue.clear()
+        queueLock.release()
+        prg.done()
+
 
 edge = (1080-imgsize)/2
 logo_width = 1900-3*edge-imgsize
@@ -75,12 +183,14 @@ color3 = np.append(skimage.color.hsv2rgb([[[color3H,1,1]]]), [[1.]])
 
 audioclip_filename = 'kp078-google-io.wav'
 
-sample_rate,data = wavfile.read(audioclip_filename)
+sample_rate,sample_data = wavfile.read(audioclip_filename)
 
-samplenum = data.shape[0]
+samplenum = sample_data.shape[0]
 
 tottime = float(samplenum)/sample_rate
 framenum = int(np.round(tottime*fps))
+
+framenum = 150
 
 framesamples = int(np.round(float(sample_rate)*sample_length))
 step = (samplenum-framesamples)/framenum
@@ -99,134 +209,69 @@ background = alphablend(episode_img, background, x,y)
 
 
 
-part = 10
+spectrum_part = 10
 bins = 24
 startX, startY = edge, edge
 width, height = logo_width/bins, 540-logo_height/2-edge-20
-last_spectrumL = None
-last_spectrumR = None
+
+queueLock = threading.Lock()
+workQueue = Queue.Queue(100)
+
+def start_threads(ThreadClass, data, prms, infostring):
+    global exitFlag, threadnum, framenum
+    exitFlag = False
+    threads = []
+    thread_frames = framenum/threadnum
+    for i in range(threadnum):
+        lower = i*thread_frames
+        upper = (i+1)*thread_frames
+        if (i+1 == threadnum):
+            upper += framenum % threadnum
+
+        thr = ThreadClass(data, prms, (lower,upper), workQueue)
+        thr.start()
+        threads.append(thr)
+
+    counter = CounterThread(framenum, workQueue, infostring, threads)
+    counter.start()
+
+    for t in threads:
+        t.join()
+
+    exitFlag = True
+    counter.join()
+
+    return threads
+
+threadnum = 4
+
+prms = startX, startY, width, height, framesamples, spectrum_part, bins
+
 
 barvalsL = np.zeros((framenum,bins))
 barvalsR = np.zeros((framenum,bins))
 
-for i in range(framenum):
-#    print "calculating %03d/%3d" % (i,framenum)
-    maxX = framesamples/part
+exitFlag = False
 
-    samplesL = data[i*step:i*step+framesamples,0]
-    spectrumL = np.abs(scipy.fft(samplesL)[range(maxX)]*np.abs(np.mean(samplesL)))
+calcthreads = start_threads(CalculateThread, sample_data, prms, "Calculating spectra")
 
-    samplesR = data[i*step:i*step+framesamples,1]
-    spectrumR = np.abs(scipy.fft(samplesR)[range(maxX)]*np.abs(np.mean(samplesR)))
-
-    if last_spectrumL is not None:
-        spectrumL = (spectrumL+last_spectrumL)/2.
-    if last_spectrumR is not None:
-        spectrumR = (spectrumR+last_spectrumR)/2.
-
-    binwidth = maxX/bins
-
-    for j in range(bins):
-        barvalsL[i,j] = np.log(1.+np.mean(spectrumL[j*binwidth:(j+1)*binwidth]))
-        barvalsR[i,j] = np.log(1.+np.mean(spectrumR[j*binwidth:(j+1)*binwidth]))
-
-    last_spectrumL = np.copy(spectrumL)
-    last_spectrumR = np.copy(spectrumR)
-
+for t in calcthreads:
+    barvalsL[t.lower:t.upper,:] = t.barvalsL
+    barvalsR[t.lower:t.upper,:] = t.barvalsR
+    if t.lower > 0:
+        barvalsL[t.lower,:] = (barvalsL[t.lower-1] + barvalsL[t.lower-1]) / 2.
+        barvalsR[t.lower,:] = (barvalsR[t.lower-1] + barvalsR[t.lower-1]) / 2.
 
 barvalsL -= np.min(barvalsL)
 barvalsL /= np.max(barvalsL)
 barvalsR -= np.min(barvalsR)
 barvalsR /= np.max(barvalsR)
 
-
-last_time = time.clock()
-
-class RenderThread (threading.Thread):
-    def __init__(self, bardata, prms, rng, q):
-        threading.Thread.__init__(self)
-        self.bardata = bardata
-        self.prms = prms
-        self.rng = rng
-        self.q = q
-
-    def run(self):
-        startX, startY, height, bins = self.prms
-        barvalsL, barvalsR = self.bardata
-        lower, upper = self.rng
-        for i in range(upper-lower):
-            frame = np.copy(background)[:,:,:]
-            for j in range(bins):
-                X = startX+j*width
-                vL = barvalsL[i,j]
-                hL = int(np.round(vL*height))
-                vR = barvalsR[i,j]
-                hR = int(np.round(vR*height))
-
-                frame[startY:startY+hR,X:X+width-2,:3] = episode_scaled[startY:startY+hR,X:X+width-2,:]
-
-                startY2 = 1080-startY
-                frame[startY2-hL:startY2,X:X+width-2,:3] = episode_scaled[startY2-hL:startY2,X:X+width-2,:]
-
-            skimage.io.imsave("frame%04d.png" % (i+lower), frame)
-            queueLock.acquire()
-            self.q.put(1)
-            queueLock.release()
-
-
-class CounterThread (threading.Thread):
-    def __init__(self, framenum, q, infostring):
-        threading.Thread.__init__(self)
-        self.frames_done = 0
-        self.framenum = framenum
-        self.q = q
-        self.infostring = infostring
-
-    def run(self):
-        prg = progress.Progress(infostring=self.infostring)
-        while not exitFlag:
-            queueLock.acquire()
-            f = 0
-            while not self.q.empty():
-                f += self.q.get()
-            queueLock.release()
-            if f > 0:
-                self.frames_done += f
-                prg.progress(float(self.frames_done)/self.framenum)
-                time.sleep(.1)
-        prg.done()
-
-
-queueLock = threading.Lock()
-workQueue = Queue.Queue(10)
-
-threadnum = 4
-
-thread_frames = framenum / threadnum
 prms = startX, startY, height, bins
-
-threads = []
 
 exitFlag = False
 
-for i in range(threadnum):
-    l = i*thread_frames
-    u = (i+1)*thread_frames
-    if (i+1==threadnum):
-        u+=framenum % threadnum
-    rt = RenderThread((barvalsL[l:u,:],barvalsR[l:u,:]), prms, (l,u), workQueue)
-    rt.start()
-    threads.append(rt)
-
-counter = CounterThread(framenum, workQueue, "Rendering frames")
-counter.start()
-
-for t in threads:
-    t.join()
-
-exitFlag = True
-
-counter.join()
+renderthreads = start_threads(RenderThread, (barvalsL, barvalsR), prms, "Rendering frames")
 
 print "All done"
 
