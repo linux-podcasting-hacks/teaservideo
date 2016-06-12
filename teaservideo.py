@@ -1,3 +1,4 @@
+#!/usr/bin/python
 
 import numpy as np
 import scipy
@@ -10,6 +11,8 @@ import scipy.io.wavfile as wavfile
 import skimage.data as skidat
 import skimage.io, skimage
 import skimage.color
+
+import Queue, threading
 
 import time, sys
 
@@ -139,6 +142,96 @@ barvalsR /= np.max(barvalsR)
 
 
 last_time = time.clock()
+
+class RenderThread (threading.Thread):
+    def __init__(self, bardata, prms, rng, q):
+        threading.Thread.__init__(self)
+        self.bardata = bardata
+        self.prms = prms
+        self.rng = rng
+        self.q = q
+
+    def run(self):
+        startX, startY, height, bins = self.prms
+        barvalsL, barvalsR = self.bardata
+        lower, upper = self.rng
+        print "Starting %04d to %04d" % (lower, upper)
+        for i in range(upper-lower):
+            frame = np.copy(background)[:,:,:]
+            for j in range(bins):
+                X = startX+j*width
+                vL = barvalsL[i,j]
+                hL = int(np.round(vL*height))
+                vR = barvalsR[i,j]
+                hR = int(np.round(vR*height))
+
+                frame[startY:startY+hR,X:X+width-2,:3] = episode_scaled[startY:startY+hR,X:X+width-2,:]
+
+                startY2 = 1080-startY
+                frame[startY2-hL:startY2,X:X+width-2,:3] = episode_scaled[startY2-hL:startY2,X:X+width-2,:]
+
+            skimage.io.imsave("frame%04d.png" % (i+lower), frame)
+            queueLock.acquire()
+            self.q.put(1)
+            queueLock.release()
+
+class FrameCounterThread (threading.Thread):
+    def __init__(self, framenum, q):
+        threading.Thread.__init__(self)
+        self.frames_done = 0
+        self.framenum = framenum
+        self.q = q
+
+    def run(self):
+        while not exitFlag:
+            queueLock.acquire()
+            f = 0
+            while not self.q.empty():
+                f += self.q.get()
+            queueLock.release()
+            if f > 0:
+                self.frames_done += f
+                print "done %04d/%04d" % (self.frames_done, self.framenum)
+            time.sleep(.1)
+        print "exiting"
+
+
+queueLock = threading.Lock()
+workQueue = Queue.Queue(10)
+
+threadnum = 4
+
+thread_frames = framenum / threadnum
+prms = startX, startY, height, bins
+
+threads = []
+
+exitFlag = False
+
+print "starting threads"
+
+for i in range(threadnum):
+    l = i*thread_frames
+    u = (i+1)*thread_frames
+    if (i+1==threadnum):
+        u+=framenum % threadnum
+    rt = RenderThread((barvalsL[l:u,:],barvalsR[l:u,:]), prms, (l,u), workQueue)
+    rt.start()
+    threads.append(rt)
+
+counter = FrameCounterThread(framenum, workQueue)
+counter.start()
+
+for t in threads:
+    t.join()
+
+exitFlag = True
+
+counter.join()
+
+print "All done"
+
+sys.exit()
 
 for i in range(framenum):
     print "rendering %04d/%4d" % (i,framenum),
