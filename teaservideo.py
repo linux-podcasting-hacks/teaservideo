@@ -16,6 +16,8 @@ import Queue, threading
 
 import time, sys
 
+import progress
+
 def alphablend(src, destination, x,y):
     h,w, chans = src.shape
     dst = destination[y:y+h, x:x+w, :]
@@ -34,6 +36,8 @@ fps = 30.
 sample_length = 0.2
 imgsize = 800
 
+gamma = 0.5
+light = 0.3
 
 edge = (1080-imgsize)/2
 logo_width = 1900-3*edge-imgsize
@@ -46,10 +50,12 @@ logo_img = scipy.misc.imresize(logo_img_orig, (logo_height, logo_width))/255.
 episode_img_orig = skimage.img_as_float(skidat.imread("KP078_Google IO.jpg"))
 
 episode_scaled = scipy.misc.imresize(episode_img_orig, (1900,1900))[410:1490:,:]/255.
-episode_scaled_grey = 1.-skimage.color.rgb2grey(episode_scaled)/2.
+#episode_scaled_grey = 0.5+skimage.color.rgb2grey(episode_scaled)/2.
+episode_scaled_grey = np.power(skimage.color.rgb2grey(episode_scaled),gamma)
+episode_scaled_grey = light+episode_scaled_grey*(1.-light)
+episode_scaled_grey = scipy.ndimage.gaussian_filter(episode_scaled_grey, sigma=10)
 
 episode_img = scipy.misc.imresize(episode_img_orig, (imgsize,imgsize))/255.
-print episode_img.shape
 
 img_hsv = skimage.color.rgb2hsv(episode_img)
 maxS = np.where(img_hsv[:,:,1].flatten() == np.amax((img_hsv[:,:,1].flatten())))
@@ -63,18 +69,13 @@ color3H = color2H + 0.3333333
 if color3H > 1.0:
     color3H -= 1.0
 
-print np.array([[[color1H,1,1]]]).shape
-
 color1 = np.append(skimage.color.hsv2rgb([[[color1H,1,1]]]), [[1.]])
 color2 = np.append(skimage.color.hsv2rgb([[[color2H,1,1]]]), [[1.]])
 color3 = np.append(skimage.color.hsv2rgb([[[color3H,1,1]]]), [[1.]])
 
-print color1
-
 audioclip_filename = 'kp078-google-io.wav'
 
 sample_rate,data = wavfile.read(audioclip_filename)
-print data.shape, sample_rate
 
 samplenum = data.shape[0]
 
@@ -83,8 +84,6 @@ framenum = int(np.round(tottime*fps))
 
 framesamples = int(np.round(float(sample_rate)*sample_length))
 step = (samplenum-framesamples)/framenum
-
-print framesamples
 
 background = np.ones((1080,1900,4))
 for i in range(3):
@@ -155,7 +154,6 @@ class RenderThread (threading.Thread):
         startX, startY, height, bins = self.prms
         barvalsL, barvalsR = self.bardata
         lower, upper = self.rng
-        print "Starting %04d to %04d" % (lower, upper)
         for i in range(upper-lower):
             frame = np.copy(background)[:,:,:]
             for j in range(bins):
@@ -175,14 +173,17 @@ class RenderThread (threading.Thread):
             self.q.put(1)
             queueLock.release()
 
-class FrameCounterThread (threading.Thread):
-    def __init__(self, framenum, q):
+
+class CounterThread (threading.Thread):
+    def __init__(self, framenum, q, infostring):
         threading.Thread.__init__(self)
         self.frames_done = 0
         self.framenum = framenum
         self.q = q
+        self.infostring = infostring
 
     def run(self):
+        prg = progress.Progress(infostring=self.infostring)
         while not exitFlag:
             queueLock.acquire()
             f = 0
@@ -191,9 +192,9 @@ class FrameCounterThread (threading.Thread):
             queueLock.release()
             if f > 0:
                 self.frames_done += f
-                print "done %04d/%04d" % (self.frames_done, self.framenum)
-            time.sleep(.1)
-        print "exiting"
+                prg.progress(float(self.frames_done)/self.framenum)
+                time.sleep(.1)
+        prg.done()
 
 
 queueLock = threading.Lock()
@@ -208,8 +209,6 @@ threads = []
 
 exitFlag = False
 
-print "starting threads"
-
 for i in range(threadnum):
     l = i*thread_frames
     u = (i+1)*thread_frames
@@ -219,7 +218,7 @@ for i in range(threadnum):
     rt.start()
     threads.append(rt)
 
-counter = FrameCounterThread(framenum, workQueue)
+counter = CounterThread(framenum, workQueue, "Rendering frames")
 counter.start()
 
 for t in threads:
@@ -232,44 +231,3 @@ counter.join()
 print "All done"
 
 sys.exit()
-
-for i in range(framenum):
-    print "rendering %04d/%4d" % (i,framenum),
-    frame = np.copy(background)[:,:,:]
-    for j in range(bins):
-        X = startX+j*width
-        vL = barvalsL[i,j]
-        hL = int(np.round(vL*height))
-        vR = barvalsR[i,j]
-        hR = int(np.round(vR*height))
-
-        alpha = 0.6
-
-        rectU = np.ones((hR,width-2,4))
-        rectU[:,:,:] = color1
-
-        rectL = np.ones((hL,width-2,4))
-        rectL[:,:,:] = color1
-
-        colorsteps = [ (0.33, color2),
-                       (0.67, color3)]
-
-        for v,c in colorsteps:
-            l = int(np.round(v*height))
-            if vL > v:
-                rectL[:-l,:,:] = c
-            if vR > v:
-                rectU[l:,:,:] = c
-
-        frame[startY:startY+hR,X:X+width-2,:3] = episode_scaled[startY:startY+hR,X:X+width-2,:]
-
-        startY2 = 1080-startY
-        frame[startY2-hL:startY2,X:X+width-2,:3] = episode_scaled[startY2-hL:startY2,X:X+width-2,:]
-
-    skimage.io.imsave("frame%04d.png" % i, frame)
-
-
-    this_time = time.clock()
-    print this_time - last_time
-    sys.stdout.flush()
-    last_time = this_time
