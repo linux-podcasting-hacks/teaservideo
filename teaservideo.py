@@ -4,7 +4,6 @@ import numpy as np
 import scipy
 import scipy.misc
 import scipy.ndimage
-import pylab as plt
 
 import scipy.io.wavfile as wavfile
 
@@ -18,6 +17,25 @@ import time, sys
 
 import progress
 
+logo_fn, clip_fn, image_fn = sys.argv[1:]
+
+fps = 30.
+sample_length = 0.2
+imgsize = 800
+
+gamma = 0.5
+light = 0.3
+
+edge = (1080-imgsize)/2
+logo_width = 1900-3*edge-imgsize
+
+logo_img_orig = skimage.img_as_float(skidat.imread(logo_fn))
+
+lH, lW, foo = logo_img_orig.shape
+logo_height = lH*logo_width/lW
+logo_img = scipy.misc.imresize(logo_img_orig, (logo_height, logo_width))/255.
+episode_img_orig = skimage.img_as_float(skidat.imread(image_fn))
+
 def alphablend(src, destination, x,y):
     h,w, chans = src.shape
     dst = destination[y:y+h, x:x+w, :]
@@ -30,24 +48,6 @@ def alphablend(src, destination, x,y):
                                           * ((1.-src[:,:,3])/result[y:y+h, x:x+w, 3])[...,None]
 
     return result
-
-
-fps = 30.
-sample_length = 0.2
-imgsize = 800
-
-gamma = 0.5
-light = 0.3
-
-edge = (1080-imgsize)/2
-logo_width = 1900-3*edge-imgsize
-
-
-logo_img_orig = skimage.img_as_float(skidat.imread("logo.png"))
-lH, lW, foo = logo_img_orig.shape
-logo_height = lH*logo_width/lW
-logo_img = scipy.misc.imresize(logo_img_orig, (logo_height, logo_width))/255.
-episode_img_orig = skimage.img_as_float(skidat.imread("KP078_Google IO.jpg"))
 
 episode_scaled = scipy.misc.imresize(episode_img_orig, (1900,1900))[410:1490:,:]/255.
 #episode_scaled_grey = 0.5+skimage.color.rgb2grey(episode_scaled)/2.
@@ -73,9 +73,7 @@ color1 = np.append(skimage.color.hsv2rgb([[[color1H,1,1]]]), [[1.]])
 color2 = np.append(skimage.color.hsv2rgb([[[color2H,1,1]]]), [[1.]])
 color3 = np.append(skimage.color.hsv2rgb([[[color3H,1,1]]]), [[1.]])
 
-audioclip_filename = 'kp078-google-io.wav'
-
-sample_rate,data = wavfile.read(audioclip_filename)
+sample_rate,data = wavfile.read(clip_fn)
 
 samplenum = data.shape[0]
 
