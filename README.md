@@ -37,7 +37,7 @@ You need to have installed
 
 * python 2.7
   * scipy
-  * skimage
+  * scikit-image
 * ffmpeg
 
 
