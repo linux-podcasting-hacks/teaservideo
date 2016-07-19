@@ -1,3 +1,4 @@
+#!/bin/sh
 
 ./teaservideo.py $1 $2 $3
 
